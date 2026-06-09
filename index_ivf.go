@@ -9,6 +9,7 @@ package faiss
 #include <faiss/c_api/IndexScalarQuantizer_c.h>
 */
 import "C"
+import "unsafe"
 
 func (idx *faissIndex) SetDirectMap(mapType int) (err error) {
 
@@ -74,4 +75,64 @@ func (idx *faissIndex) SetQuantizers(srcIndex Index) error {
 		return newFaissError(ErrSetQuantizerFailed, getLastError(), int(c))
 	}
 	return nil
+}
+
+// IVFListSize returns the number of vectors in posting list list_no.
+func (idx *faissIndex) IVFListSize(listNo int) (int, error) {
+	ivfPtr := C.faiss_IndexIVF_cast(idx.cPtr())
+	if ivfPtr == nil {
+		return 0, ErrNotIVFIndex
+	}
+	return int(C.faiss_IndexIVF_get_list_size(ivfPtr, C.size_t(listNo))), nil
+}
+
+// IVFCodeSize returns the number of bytes per stored code/vector in the index.
+// For IndexIVFFlat this equals d * 4 (raw float32 vectors).
+func (idx *faissIndex) IVFCodeSize() (int, error) {
+	ivfPtr := C.faiss_IndexIVF_cast(idx.cPtr())
+	if ivfPtr == nil {
+		return 0, ErrNotIVFIndex
+	}
+	return int(C.faiss_IndexIVF_code_size(ivfPtr)), nil
+}
+
+// IVFListIDs returns the vector IDs stored in posting list list_no.
+func (idx *faissIndex) IVFListIDs(listNo int) ([]int64, error) {
+	ivfPtr := C.faiss_IndexIVF_cast(idx.cPtr())
+	if ivfPtr == nil {
+		return nil, ErrNotIVFIndex
+	}
+	listSize := int(C.faiss_IndexIVF_get_list_size(ivfPtr, C.size_t(listNo)))
+	if listSize == 0 {
+		return nil, nil
+	}
+	buf := make([]int64, listSize)
+	C.faiss_IndexIVF_invlists_get_ids(
+		ivfPtr,
+		C.size_t(listNo),
+		(*C.idx_t)(unsafe.Pointer(&buf[0])),
+	)
+	return buf, nil
+}
+
+// IVFListCodes returns the raw byte codes for all vectors in posting list
+// list_no. Each code is IVFCodeSize() bytes. For IndexIVFFlat, reinterpret
+// each code as []float32 of length d.
+func (idx *faissIndex) IVFListCodes(listNo int) ([]byte, error) {
+	ivfPtr := C.faiss_IndexIVF_cast(idx.cPtr())
+	if ivfPtr == nil {
+		return nil, ErrNotIVFIndex
+	}
+	listSize := int(C.faiss_IndexIVF_get_list_size(ivfPtr, C.size_t(listNo)))
+	codeSize := int(C.faiss_IndexIVF_code_size(ivfPtr))
+	if listSize == 0 {
+		return nil, nil
+	}
+	buf := make([]byte, listSize*codeSize)
+	C.faiss_IndexIVF_invlists_get_codes(
+		ivfPtr,
+		C.size_t(listNo),
+		(*C.uint8_t)(unsafe.Pointer(&buf[0])),
+	)
+	return buf, nil
 }

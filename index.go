@@ -140,6 +140,11 @@ type Index interface {
 
 	// CodeSize returns the size of the produced codes in bytes.
 	CodeSize() (uint64, error)
+
+	IVFListSize(listNo int) (int, error)
+	IVFCodeSize() (int, error)
+	IVFListIDs(listNo int) ([]int64, error)
+	IVFListCodes(listNo int) ([]byte, error)
 }
 
 type faissIndex struct {
