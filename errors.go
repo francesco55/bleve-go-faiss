@@ -83,6 +83,7 @@ var (
 	ErrNotIDMapIndex = errors.New("index is not an IDMap index")
 	ErrNotIVFIndex   = errors.New("index is not an IVF index")
 	ErrNotBIVFIndex  = errors.New("index is not a binary IVF index")
+	ErrNoPartitionMap = errors.New("index has no partition map")
 
 	// ---- Unsupported operations ----
 

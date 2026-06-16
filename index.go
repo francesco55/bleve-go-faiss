@@ -145,6 +145,22 @@ type Index interface {
 	IVFCodeSize() (int, error)
 	IVFListIDs(listNo int) ([]int64, error)
 	IVFListCodes(listNo int) ([]byte, error)
+
+	// Distributed IVF partition map — set up which worker owns each inverted list.
+	InitPartitionMap(myWorkerID int) error
+	SetListWorker(listNo int, workerID int) error
+	GetListWorker(listNo int) (int, error)
+	HasPartitionMap() bool
+	// CopyListsTo copies the inverted lists identified by listNos from this index
+	// into dst.  Both indexes must have identical nlist and code_size.
+	CopyListsTo(dst Index, listNos []int64) error
+
+	// SearchLocalShard performs coarse quantization, routes centroid probes to
+	// local vs. remote workers, searches local lists, and returns the partial
+	// results together with probes that must be forwarded to remote workers.
+	// myWorkerID must match the ID passed to InitPartitionMap.
+	SearchLocalShard(x []float32, k int64, sel Selector, params json.RawMessage, myWorkerID int) (
+		distances []float32, labels []int64, remoteProbes []RemoteProbe, err error)
 }
 
 type faissIndex struct {
