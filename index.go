@@ -274,11 +274,15 @@ func (idx *faissIndex) ObtainClustersWithDistancesFromIVFIndex(x []float32, incl
 	}
 	defer params.Delete()
 
-	// Populate these with the centroids and their distances.
-	centroids := make([]int64, numCentroids)
-	centroidDistances := make([]float32, numCentroids)
-
 	n := len(x) / idx.D()
+	if n == 0 {
+		return nil, nil, nil
+	}
+
+	// Output layout is row-major: [query 0 results ... query n-1 results],
+	// each row has numCentroids entries.
+	centroids := make([]int64, int64(n)*numCentroids)
+	centroidDistances := make([]float32, int64(n)*numCentroids)
 
 	if c := C.faiss_IndexIVF_search_closest_eligible_centroids(
 		ivfPtr,
