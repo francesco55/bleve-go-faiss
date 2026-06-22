@@ -7,6 +7,7 @@ package faiss
 #include <faiss/c_api/IndexIVF_c.h>
 #include <faiss/c_api/IndexIVF_c_ex.h>
 #include <faiss/c_api/IndexScalarQuantizer_c.h>
+#include <faiss/c_api/utils/utils_c.h>
 */
 import "C"
 import (
@@ -305,4 +306,35 @@ func (idx *faissIndex) SearchLocalShard(
 		return nil, nil, nil, err
 	}
 	return distances, labels, remoteProbes, nil
+}
+
+// MergeKNNResults merges nshard pre-sorted (n×k) result lists into a single
+// top-k list. allDistances and allLabels must each have length nshard*n*k in
+// (shard, query, rank) row-major order. keepMin=true for L2 (smallest distance
+// wins), false for inner product (largest wins).
+func MergeKNNResults(
+	n, k, nshard int,
+	keepMin bool,
+	allDistances []float32,
+	allLabels []int64,
+) ([]float32, []int64, error) {
+	distances := make([]float32, n*k)
+	labels := make([]int64, n*k)
+	keepMinC := C.int(0)
+	if keepMin {
+		keepMinC = C.int(1)
+	}
+	if c := C.faiss_merge_knn_results(
+		C.size_t(n),
+		C.size_t(k),
+		C.int(nshard),
+		keepMinC,
+		(*C.float)(&allDistances[0]),
+		(*C.idx_t)(&allLabels[0]),
+		(*C.float)(&distances[0]),
+		(*C.idx_t)(&labels[0]),
+	); c != 0 {
+		return nil, nil, newFaissError(ErrSearchFailed, getLastError(), int(c))
+	}
+	return distances, labels, nil
 }
