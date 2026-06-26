@@ -198,6 +198,86 @@ func (idx *faissIndex) HasPartitionMap() bool {
 	return C.faiss_IndexIVF_has_partition_map(ivfPtr) != 0
 }
 
+// InitPartitionMapWithOwners initialises the partition map and writes all
+// list→worker assignments in a single cgo call.
+func (idx *faissIndex) InitPartitionMapWithOwners(myWorkerID int, listToWorker []int) error {
+	ivfPtr := C.faiss_IndexIVF_cast(idx.cPtr())
+	if ivfPtr == nil {
+		return ErrNotIVFIndex
+	}
+	if len(listToWorker) == 0 {
+		return nil
+	}
+	buf := make([]int32, len(listToWorker))
+	for i, v := range listToWorker {
+		buf[i] = int32(v)
+	}
+	if c := C.faiss_IndexIVF_init_partition_map_with_owners(
+		ivfPtr,
+		C.int(myWorkerID),
+		(*C.int)(unsafe.Pointer(&buf[0])),
+		C.size_t(len(buf)),
+	); c != 0 {
+		return newFaissError(ErrSetParamsFailed, getLastError(), int(c))
+	}
+	return nil
+}
+
+// SetListWorkers assigns each list in listNos to the corresponding entry in
+// workerIDs in a single cgo call.  Both slices must have the same length.
+// InitPartitionMap or InitPartitionMapWithOwners must be called first.
+func (idx *faissIndex) SetListWorkers(listNos []int64, workerIDs []int) error {
+	ivfPtr := C.faiss_IndexIVF_cast(idx.cPtr())
+	if ivfPtr == nil {
+		return ErrNotIVFIndex
+	}
+	if len(listNos) != len(workerIDs) {
+		return ErrInvalidArgument
+	}
+	if len(listNos) == 0 {
+		return nil
+	}
+	buf := make([]int32, len(workerIDs))
+	for i, v := range workerIDs {
+		buf[i] = int32(v)
+	}
+	if c := C.faiss_IndexIVF_set_list_workers(
+		ivfPtr,
+		(*C.idx_t)(unsafe.Pointer(&listNos[0])),
+		(*C.int)(unsafe.Pointer(&buf[0])),
+		C.size_t(len(listNos)),
+	); c != 0 {
+		return newFaissError(ErrSetParamsFailed, getLastError(), int(c))
+	}
+	return nil
+}
+
+// GetListWorkers returns the owning worker ID for each entry in listNos in a
+// single cgo call.  The returned slice is parallel to listNos.
+func (idx *faissIndex) GetListWorkers(listNos []int64) ([]int, error) {
+	ivfPtr := C.faiss_IndexIVF_cast(idx.cPtr())
+	if ivfPtr == nil {
+		return nil, ErrNotIVFIndex
+	}
+	if len(listNos) == 0 {
+		return nil, nil
+	}
+	buf := make([]int32, len(listNos))
+	if c := C.faiss_IndexIVF_get_list_workers(
+		ivfPtr,
+		(*C.idx_t)(unsafe.Pointer(&listNos[0])),
+		C.size_t(len(listNos)),
+		(*C.int)(unsafe.Pointer(&buf[0])),
+	); c != 0 {
+		return nil, newFaissError(ErrInspectIndexFailed, getLastError(), int(c))
+	}
+	result := make([]int, len(buf))
+	for i, v := range buf {
+		result[i] = int(v)
+	}
+	return result, nil
+}
+
 // CopyListsTo copies the inverted lists identified by listNos from this index
 // into dst.  Both indexes must have identical nlist and code_size.
 func (idx *faissIndex) CopyListsTo(dst Index, listNos []int64) error {

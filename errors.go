@@ -89,6 +89,10 @@ var (
 
 	ErrMergeFromNotSupported    = errors.New("merge from is not supported for this index type")
 	ErrSetQuantizerNotSupported = errors.New("set quantizer not supported for this index type")
+
+	// ---- Argument errors ----
+
+	ErrInvalidArgument = errors.New("invalid argument")
 )
 
 // getLastError returns the last error message set by the FAISS C API.

@@ -151,6 +151,10 @@ type Index interface {
 	SetListWorker(listNo int, workerID int) error
 	GetListWorker(listNo int) (int, error)
 	HasPartitionMap() bool
+	// Batched variants: one cgo call for the full list instead of one per entry.
+	InitPartitionMapWithOwners(myWorkerID int, listToWorker []int) error
+	SetListWorkers(listNos []int64, workerIDs []int) error
+	GetListWorkers(listNos []int64) ([]int, error)
 	// CopyListsTo copies the inverted lists identified by listNos from this index
 	// into dst.  Both indexes must have identical nlist and code_size.
 	CopyListsTo(dst Index, listNos []int64) error
