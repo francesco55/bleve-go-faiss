@@ -383,16 +383,13 @@ func (idx *faissIndex) SearchLocalShard(
 		return distances, labels, remoteProbes, nil
 	}
 
-	// centroidsToProbe = len(localIDs) so every local list is scanned; the
-	// effective probe count is further capped inside SearchClustersFromIVFIndex
-	// by any nprobe override carried in params.
-	distances, labels, err := idx.SearchClustersFromIVFIndex(
-		localIDs, localDis, len(localIDs), x, k, sel, params,
+	perQueryDistances, perQueryLabels, err := idx.SearchClustersFromIVFIndex(
+		[][]int64{localIDs}, [][]float32{localDis}, x, k, sel, params,
 	)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	return distances, labels, remoteProbes, nil
+	return perQueryDistances[0], perQueryLabels[0], remoteProbes, nil
 }
 
 // ObtainClustersWithWorkersDistancesFromIVFIndex coarse-quantizes the queries

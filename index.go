@@ -13,6 +13,7 @@ package faiss
 import "C"
 import (
 	"encoding/json"
+	"math"
 	"reflect"
 	"sort"
 	"unsafe"
@@ -100,9 +101,13 @@ type Index interface {
 	// - params is a JSON object that can contain additional search parameters specific to the index type, such as IVF search parameters.
 	SearchWithOptions(x []float32, k int64, sel Selector, params json.RawMessage) (distances []float32, labels []int64, err error)
 
-	// Applicable only to IVF indexes: Search clusters whose IDs are in eligibleCentroidIDs
-	SearchClustersFromIVFIndex(eligibleCentroidIDs []int64, centroidDis []float32, centroidsToProbe int,
-		x []float32, k int64, include Selector, params json.RawMessage) ([]float32, []int64, error)
+	// Applicable only to IVF indexes: Search clusters whose IDs are in eligibleCentroidIDs.
+	// eligibleCentroidIDs[i] / centroidDis[i] hold the pre-assigned centroid IDs and
+	// distances for query i; rows may have different lengths.
+	// len(eligibleCentroidIDs) must equal len(x)/D().
+	// Returns distances[i] and labels[i] — the k nearest neighbours for query i.
+	SearchClustersFromIVFIndex(eligibleCentroidIDs [][]int64, centroidDis [][]float32,
+		x []float32, k int64, include Selector, params json.RawMessage) ([][]float32, [][]int64, error)
 
 	Reconstruct(key int64) ([]float32, error)
 
@@ -382,28 +387,64 @@ func (idx *faissIndex) Nlist() int {
 	return int(C.faiss_IndexIVF_nlist(idx.idx))
 }
 
-func (idx *faissIndex) SearchClustersFromIVFIndex(eligibleCentroidIDs []int64, centroidDis []float32, centroidsToProbe int,
-	x []float32, k int64, include Selector, params json.RawMessage) ([]float32, []int64, error) {
-	// Applicable only to IVF indexes
+func (idx *faissIndex) SearchClustersFromIVFIndex(eligibleCentroidIDs [][]int64, centroidDis [][]float32,
+	x []float32, k int64, include Selector, params json.RawMessage) ([][]float32, [][]int64, error) {
 	ivfPtr := C.faiss_IndexIVF_cast(idx.cPtr())
 	if ivfPtr == nil {
 		return nil, nil, ErrNotIVFIndex
 	}
-	// If no include selector is provided, we have no results to return.
-	// return an error indicating that the SearchClustersFromIVFIndex requires a valid selector.
 	if include == nil {
 		return nil, nil, ErrSelectorNil
 	}
-	// create a temporary search params object to set nprobe, this will override
-	// the nprobe and the nlist set at index time, this will allow the search to
-	// probe only the clusters specified in eligibleCentroidIDs
+
+	n := len(x) / idx.D()
+	if n == 0 {
+		return nil, nil, nil
+	}
+	if len(eligibleCentroidIDs) != n || len(centroidDis) != n {
+		return nil, nil, ErrInvalidArgument
+	}
+
+	// Find the widest row; this becomes the FAISS assign-array stride (nprobe).
+	// Shorter rows are padded with the FAISS sentinel -1, which
+	// search_preassigned skips automatically.
+	maxProbe := 0
+	for _, row := range eligibleCentroidIDs {
+		if len(row) > maxProbe {
+			maxProbe = len(row)
+		}
+	}
+	if maxProbe == 0 {
+		distances := make([][]float32, n)
+		labels := make([][]int64, n)
+		for i := range labels {
+			distances[i] = make([]float32, k)
+			labels[i] = make([]int64, k)
+			for j := range labels[i] {
+				labels[i][j] = -1
+				distances[i][j] = math.MaxFloat32
+			}
+		}
+		return distances, labels, nil
+	}
+
+	// Build flat n*maxProbe arrays in row-major order, padding short rows with -1.
+	flatIDs := make([]int64, n*maxProbe)
+	flatDis := make([]float32, n*maxProbe)
+	for i := range flatIDs {
+		flatIDs[i] = -1
+	}
+	for q := 0; q < n; q++ {
+		base := q * maxProbe
+		copy(flatIDs[base:], eligibleCentroidIDs[q])
+		copy(flatDis[base:], centroidDis[q])
+	}
+
 	tempParams := &defaultSearchParamsIVF{
-		// Nlist is set to the number of eligible centroids, which will override
-		// the nlist set at index time.
-		Nlist: len(eligibleCentroidIDs),
-		// Have to override nprobe so that more clusters will be searched for this
-		// query, if required.
-		Nprobe: centroidsToProbe,
+		// Nlist is the per-query centroid count so ivf_nprobe_pct scales against
+		// the pre-assigned set, not the full index nlist.
+		Nlist:  maxProbe,
+		Nprobe: maxProbe,
 	}
 	searchParams, err := NewSearchParams(idx, params, include, tempParams)
 	if err != nil {
@@ -411,34 +452,48 @@ func (idx *faissIndex) SearchClustersFromIVFIndex(eligibleCentroidIDs []int64, c
 	}
 	defer searchParams.Delete()
 
-	n := len(x) / idx.D()
+	// A JSON params override may reduce nprobe below maxProbe.  FAISS strides
+	// the assign array by nprobe, so compact rows when that happens so query i
+	// reads from the correct flat-array offset.
+	effectiveNprobe := int(min(getNProbeFromSearchParams(searchParams), int32(maxProbe)))
+	if effectiveNprobe < maxProbe {
+		compactIDs := make([]int64, n*effectiveNprobe)
+		compactDis := make([]float32, n*effectiveNprobe)
+		for q := 0; q < n; q++ {
+			src := q * maxProbe
+			dst := q * effectiveNprobe
+			copy(compactIDs[dst:], flatIDs[src:src+effectiveNprobe])
+			copy(compactDis[dst:], flatDis[src:src+effectiveNprobe])
+		}
+		flatIDs = compactIDs
+		flatDis = compactDis
+	}
 
-	distances := make([]float32, int64(n)*k)
-	labels := make([]int64, int64(n)*k)
-	// Adjust the slices to match the effective nprobe set in searchParams, as the input
-	// parameters may have different nprobe value, which will be a hard override, over the
-	// centroidsToProbe value passed to this function.
-	// If the effective nprobe is greater than the length of eligibleCentroidIDs,
-	// we limit it to the length of eligibleCentroidIDs.
-	effectiveNprobe := min(getNProbeFromSearchParams(searchParams), int32(len(eligibleCentroidIDs)))
-	eligibleCentroidIDs = eligibleCentroidIDs[:effectiveNprobe]
-	centroidDis = centroidDis[:effectiveNprobe]
+	flatDistances := make([]float32, int64(n)*k)
+	flatLabels := make([]int64, int64(n)*k)
 
 	if c := C.faiss_IndexIVF_search_preassigned_with_params(
 		ivfPtr,
-		(C.idx_t)(n),
+		C.idx_t(n),
 		(*C.float)(&x[0]),
-		(C.idx_t)(k),
-		(*C.idx_t)(&eligibleCentroidIDs[0]),
-		(*C.float)(&centroidDis[0]),
-		(*C.float)(&distances[0]),
-		(*C.idx_t)(&labels[0]),
-		(C.int)(0),
+		C.idx_t(k),
+		(*C.idx_t)(&flatIDs[0]),
+		(*C.float)(&flatDis[0]),
+		(*C.float)(&flatDistances[0]),
+		(*C.idx_t)(&flatLabels[0]),
+		C.int(0),
 		searchParams.sp,
 	); c != 0 {
 		return nil, nil, newFaissError(ErrSearchFailed, getLastError(), int(c))
 	}
 
+	// Slice the flat results into per-query rows.
+	distances := make([][]float32, n)
+	labels := make([][]int64, n)
+	for q := 0; q < n; q++ {
+		distances[q] = flatDistances[int64(q)*k : int64(q+1)*k]
+		labels[q] = flatLabels[int64(q)*k : int64(q+1)*k]
+	}
 	return distances, labels, nil
 }
 
