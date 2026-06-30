@@ -24,6 +24,13 @@ type RemoteProbe struct {
 	Distance   float32
 }
 
+// WorkerProbes groups the centroid probes routed to one worker for a single query.
+type WorkerProbes struct {
+	WorkerID    int
+	CentroidIDs []int64
+	Distances   []float32
+}
+
 func (idx *faissIndex) SetDirectMap(mapType int) (err error) {
 
 	ivfPtr := C.faiss_IndexIVF_cast(idx.cPtr())
@@ -386,6 +393,76 @@ func (idx *faissIndex) SearchLocalShard(
 		return nil, nil, nil, err
 	}
 	return distances, labels, remoteProbes, nil
+}
+
+// ObtainClustersWithWorkersDistancesFromIVFIndex coarse-quantizes the queries
+// in x (len(x)/d queries), looks up the owning worker for each of the nprobe
+// nearest centroids via the partition map, and returns the results grouped by
+// worker.  The outer slice is indexed by query; the inner slice contains one
+// WorkerProbes entry per unique worker that owns at least one of that query's
+// centroid probes.  FAISS sentinel centroids (id < 0) are silently dropped.
+// Requires a partition map to be initialised on the index.
+func (idx *faissIndex) ObtainClustersWithWorkersDistancesFromIVFIndex(x []float32, nprobe int64) ([][]WorkerProbes, error) {
+	ivfPtr := C.faiss_IndexIVF_cast(idx.cPtr())
+	if ivfPtr == nil {
+		return nil, ErrNotIVFIndex
+	}
+	if !idx.HasPartitionMap() {
+		return nil, ErrNoPartitionMap
+	}
+	d := idx.D()
+	if d == 0 {
+		return nil, ErrInvalidArgument
+	}
+	n := len(x) / d
+	if n == 0 {
+		return nil, nil
+	}
+
+	total := n * int(nprobe)
+	workerIDs := make([]int32, total)
+	centroidIDs := make([]int64, total)
+	distances := make([]float32, total)
+
+	if c := C.faiss_IndexIVF_search_closest_centroids_with_workers(
+		ivfPtr,
+		C.idx_t(n),
+		(*C.float)(&x[0]),
+		C.idx_t(nprobe),
+		(*C.int)(unsafe.Pointer(&workerIDs[0])),
+		(*C.idx_t)(unsafe.Pointer(&centroidIDs[0])),
+		(*C.float)(&distances[0]),
+	); c != 0 {
+		return nil, newFaissError(ErrSearchFailed, getLastError(), int(c))
+	}
+
+	result := make([][]WorkerProbes, n)
+	for q := 0; q < n; q++ {
+		workerMap := make(map[int]*WorkerProbes)
+		var order []int
+		for p := int64(0); p < nprobe; p++ {
+			slot := int64(q)*nprobe + p
+			cid := centroidIDs[slot]
+			if cid < 0 {
+				continue
+			}
+			wid := int(workerIDs[slot])
+			wp, ok := workerMap[wid]
+			if !ok {
+				wp = &WorkerProbes{WorkerID: wid}
+				workerMap[wid] = wp
+				order = append(order, wid)
+			}
+			wp.CentroidIDs = append(wp.CentroidIDs, cid)
+			wp.Distances = append(wp.Distances, distances[slot])
+		}
+		plan := make([]WorkerProbes, len(order))
+		for i, wid := range order {
+			plan[i] = *workerMap[wid]
+		}
+		result[q] = plan
+	}
+	return result, nil
 }
 
 // MergeKNNResults merges nshard pre-sorted (n×k) result lists into a single

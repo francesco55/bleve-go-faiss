@@ -165,6 +165,12 @@ type Index interface {
 	// myWorkerID must match the ID passed to InitPartitionMap.
 	SearchLocalShard(x []float32, k int64, sel Selector, params json.RawMessage, myWorkerID int) (
 		distances []float32, labels []int64, remoteProbes []RemoteProbe, err error)
+
+	// ObtainClustersWithWorkersDistancesFromIVFIndex coarse-quantizes the queries
+	// in x (len(x)/d queries), looks up the owning worker for each of the nprobe
+	// nearest centroids via the partition map, and returns the results grouped by
+	// worker per query. Requires a partition map to be initialised on the index.
+	ObtainClustersWithWorkersDistancesFromIVFIndex(x []float32, nprobe int64) ([][]WorkerProbes, error)
 }
 
 type faissIndex struct {
