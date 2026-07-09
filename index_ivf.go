@@ -157,6 +157,38 @@ func (idx *faissIndex) IVFListCodes(listNo int) ([]byte, error) {
 	return buf, nil
 }
 
+// IVFTrainAndAdd trains the index and adds x in a single call, avoiding a
+// second pass over the data compared to calling Train then Add separately.
+func (idx *faissIndex) IVFTrainAndAdd(x []float32) error {
+	ivfPtr := C.faiss_IndexIVF_cast(idx.cPtr())
+	if ivfPtr == nil {
+		return ErrNotIVFIndex
+	}
+	n := len(x) / idx.D()
+	if c := C.faiss_IndexIVF_train_and_add(ivfPtr, C.idx_t(n), (*C.float)(&x[0])); c != 0 {
+		return newFaissError(ErrTrainFailed, getLastError(), int(c))
+	}
+	return nil
+}
+
+// IVFTrainAndAddWithIDs trains the index and adds x with explicit vector IDs.
+func (idx *faissIndex) IVFTrainAndAddWithIDs(x []float32, xids []int64) error {
+	ivfPtr := C.faiss_IndexIVF_cast(idx.cPtr())
+	if ivfPtr == nil {
+		return ErrNotIVFIndex
+	}
+	n := len(x) / idx.D()
+	if c := C.faiss_IndexIVF_train_and_add_with_ids(
+		ivfPtr,
+		C.idx_t(n),
+		(*C.float)(&x[0]),
+		(*C.idx_t)(&xids[0]),
+	); c != 0 {
+		return newFaissError(ErrTrainFailed, getLastError(), int(c))
+	}
+	return nil
+}
+
 // InitPartitionMap allocates a partition map on the index and sets this node's
 // worker ID.  Must be called before SetListWorker or SearchLocalShard.
 func (idx *faissIndex) InitPartitionMap(myWorkerID int) error {

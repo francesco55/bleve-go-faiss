@@ -151,6 +151,13 @@ type Index interface {
 	IVFListIDs(listNo int) ([]int64, error)
 	IVFListCodes(listNo int) ([]byte, error)
 
+	// IVFTrainAndAdd trains the index and adds x in a single IVF-specific call.
+	// Equivalent to calling Train then Add, but avoids a second pass over x.
+	IVFTrainAndAdd(x []float32) error
+
+	// IVFTrainAndAddWithIDs trains the index and adds x with explicit vector IDs.
+	IVFTrainAndAddWithIDs(x []float32, xids []int64) error
+
 	// Distributed IVF partition map — set up which worker owns each inverted list.
 	InitPartitionMap(myWorkerID int) error
 	SetListWorker(listNo int, workerID int) error
