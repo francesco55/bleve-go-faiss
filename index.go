@@ -88,6 +88,13 @@ type Index interface {
 	// their vectors in chosen order (descending or ascending)
 	ObtainKCentroidCardinalitiesFromIVFIndex(limit int, descending bool) ([]uint64, [][]float32, error)
 
+	// Applicable only to IVF indexes: returns all nlist coarse-quantizer centroid
+	// vectors in list-id order (list 0 first) as a flat row-major slice of length
+	// nlist*d. Unlike ObtainKCentroidCardinalitiesFromIVFIndex the ordering is NOT
+	// permuted by cardinality; callers that key by list id (e.g. building a
+	// partition map / SearchCentroidToRouting) require this stable ordering.
+	GetCentroids() ([]float32, error)
+
 	// fetch centroid count
 	Nlist() int
 
@@ -364,6 +371,33 @@ func (idx *faissIndex) ObtainKCentroidCardinalitiesFromIVFIndex(limit int, desce
 
 	return rvCardinalities, rvCentroids, nil
 
+}
+
+// GetCentroids returns every coarse-quantizer centroid vector in list-id order
+// (list 0 first) as a flat row-major slice of length nlist*d. It reuses the same
+// C primitive as ObtainKCentroidCardinalitiesFromIVFIndex but skips the
+// cardinality-based reordering, so out[i*d:(i+1)*d] is always the centroid of
+// inverted list i.
+func (idx *faissIndex) GetCentroids() ([]float32, error) {
+	nlist := int(C.faiss_IndexIVF_nlist(idx.idx))
+	if nlist == 0 {
+		return nil, nil
+	}
+
+	d := idx.D()
+	flatCentroids := make([]float32, nlist*d)
+	cardinalities := make([]C.size_t, nlist)
+
+	if c := C.faiss_IndexIVF_get_centroids_and_cardinality(
+		idx.idx,
+		(*C.float)(&flatCentroids[0]),
+		(*C.size_t)(&cardinalities[0]),
+		nil,
+	); c != 0 {
+		return nil, newFaissError(ErrInspectIndexFailed, getLastError(), int(c))
+	}
+
+	return flatCentroids, nil
 }
 
 func getIndicesOfKCentroidCardinalities(cardinalities []C.size_t, k int, descending bool) []int {
