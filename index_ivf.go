@@ -97,6 +97,30 @@ func (idx *faissIndex) SetQuantizers(srcIndex Index) error {
 	return nil
 }
 
+// SetQuantizerCentroids directly sets this IVF index's coarse-quantizer centroids
+// to the given nlist centroids (row-major, len == nlist*d), in order, and marks the
+// index trained — bypassing k-means. Inverted list i corresponds to centroids[i], so
+// a caller that already knows its centroids (e.g. routing centroids) avoids both the
+// cost of training and the list reordering k-means can introduce.
+func (idx *faissIndex) SetQuantizerCentroids(centroids []float32, nlist, d int) error {
+	ivfPtr := C.faiss_IndexIVF_cast(idx.cPtr())
+	if ivfPtr == nil {
+		return ErrNotIVFIndex
+	}
+	if len(centroids) != nlist*d {
+		return ErrSetQuantizerFailed
+	}
+	if c := C.faiss_IndexIVF_set_quantizer_centroids(
+		ivfPtr,
+		(*C.float)(&centroids[0]),
+		C.size_t(nlist),
+		C.size_t(d),
+	); c != 0 {
+		return newFaissError(ErrSetQuantizerFailed, getLastError(), int(c))
+	}
+	return nil
+}
+
 // IVFListSize returns the number of vectors in posting list list_no.
 func (idx *faissIndex) IVFListSize(listNo int) (int, error) {
 	ivfPtr := C.faiss_IndexIVF_cast(idx.cPtr())

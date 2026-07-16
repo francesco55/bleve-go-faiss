@@ -172,6 +172,8 @@ type Index interface {
 	HasPartitionMap() bool
 	// Batched variants: one cgo call for the full list instead of one per entry.
 	InitPartitionMapWithOwners(myWorkerID int, listToWorker []int) error
+	// SetQuantizerCentroids sets the coarse-quantizer centroids directly (no k-means).
+	SetQuantizerCentroids(centroids []float32, nlist, d int) error
 	SetListWorkers(listNos []int64, workerIDs []int) error
 	GetListWorkers(listNos []int64) ([]int, error)
 	// CopyListsTo copies the inverted lists identified by listNos from this index
