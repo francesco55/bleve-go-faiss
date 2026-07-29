@@ -121,6 +121,35 @@ func (idx *faissIndex) SetQuantizerCentroids(centroids []float32, nlist, d int) 
 	return nil
 }
 
+// AddWithIDsAndLists adds n vectors (x row-major, len == n*d) with explicit ids to
+// the inverted lists named by listNos, skipping the coarse-quantizer scan that
+// AddWithIDs performs. Use when the owning list is already known (e.g. resolved
+// during routing). Every listNo must be in [0, nlist); the C side rejects out-of-
+// range values rather than silently dropping the vector.
+func (idx *faissIndex) AddWithIDsAndLists(x []float32, xids, listNos []int64) error {
+	ivfPtr := C.faiss_IndexIVF_cast(idx.cPtr())
+	if ivfPtr == nil {
+		return ErrNotIVFIndex
+	}
+	n := len(xids)
+	if n == 0 {
+		return nil
+	}
+	if len(listNos) != n || len(x) != n*idx.D() {
+		return ErrAddFailed
+	}
+	if c := C.faiss_IndexIVF_add_with_ids_and_lists(
+		ivfPtr,
+		C.idx_t(n),
+		(*C.float)(&x[0]),
+		(*C.idx_t)(&xids[0]),
+		(*C.idx_t)(&listNos[0]),
+	); c != 0 {
+		return newFaissError(ErrAddFailed, getLastError(), int(c))
+	}
+	return nil
+}
+
 // IVFListSize returns the number of vectors in posting list list_no.
 func (idx *faissIndex) IVFListSize(listNo int) (int, error) {
 	ivfPtr := C.faiss_IndexIVF_cast(idx.cPtr())

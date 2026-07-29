@@ -174,6 +174,9 @@ type Index interface {
 	InitPartitionMapWithOwners(myWorkerID int, listToWorker []int) error
 	// SetQuantizerCentroids sets the coarse-quantizer centroids directly (no k-means).
 	SetQuantizerCentroids(centroids []float32, nlist, d int) error
+	// AddWithIDsAndLists adds vectors to caller-chosen inverted lists, skipping the
+	// coarse-quantizer scan AddWithIDs performs. Use when the list is already known.
+	AddWithIDsAndLists(x []float32, xids, listNos []int64) error
 	SetListWorkers(listNos []int64, workerIDs []int) error
 	GetListWorkers(listNos []int64) ([]int, error)
 	// CopyListsTo copies the inverted lists identified by listNos from this index
