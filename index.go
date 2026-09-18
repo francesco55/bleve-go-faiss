@@ -47,6 +47,23 @@ type Index interface {
 	// 2 for Hash
 	SetDirectMap(maptype int) error
 
+	// set how OpenMP parallelises a search over an IVF index.
+	// 0 for split over queries (default)
+	// 1 for parallelise over inverted lists
+	// 2 for both
+	// 3 for split over queries, finer granularity
+	// optionally or'ed with 1024 to skip result-heap init/reorder, which
+	// leaves the caller owning the heap and returns results unsorted.
+	//
+	// Mode 0 gives a single query one thread that walks every probe in turn,
+	// so mode 1 is the one to use for single-query latency. max_codes is only
+	// honoured in modes 0 and 3. This mutates the index, so set it before any
+	// search is in flight.
+	SetParallelMode(parallelMode int) error
+
+	// GetParallelMode reports the mode set by SetParallelMode.
+	GetParallelMode() (int, error)
+
 	// set the number of probes for IVF indexes
 	SetNProbe(nprobe int32)
 

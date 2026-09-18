@@ -46,6 +46,44 @@ func (idx *faissIndex) SetDirectMap(mapType int) (err error) {
 	return err
 }
 
+// SetParallelMode selects how OpenMP parallelises a search over this index.
+// Mode 0 splits work over the query batch, so a single query runs on one
+// thread that walks every probe serially; mode 1 parallelises the probe loop
+// instead and is the one that lowers single-query latency.
+//
+// The mode is index state rather than a search parameter, so this mutates the
+// index: set it once after loading and before any search is in flight, or it
+// races with concurrent readers.
+func (idx *faissIndex) SetParallelMode(parallelMode int) (err error) {
+
+	ivfPtr := C.faiss_IndexIVF_cast(idx.cPtr())
+	if ivfPtr == nil {
+		return ErrNotIVFIndex
+	}
+	if c := C.faiss_IndexIVF_set_parallel_mode(
+		ivfPtr,
+		C.int(parallelMode),
+	); c != 0 {
+		err = newFaissError(ErrSetParamsFailed, getLastError(), int(c))
+	}
+	return err
+}
+
+// GetParallelMode returns the mode currently set on this index, including the
+// no-heap-init bit if it is set.
+func (idx *faissIndex) GetParallelMode() (int, error) {
+
+	ivfPtr := C.faiss_IndexIVF_cast(idx.cPtr())
+	if ivfPtr == nil {
+		return 0, ErrNotIVFIndex
+	}
+	var mode C.int
+	if c := C.faiss_IndexIVF_get_parallel_mode(ivfPtr, &mode); c != 0 {
+		return 0, newFaissError(ErrInspectIndexFailed, getLastError(), int(c))
+	}
+	return int(mode), nil
+}
+
 func (idx *faissIndex) GetSubIndex() (Index, error) {
 
 	ptr := C.faiss_IndexIDMap2_cast(idx.cPtr())
